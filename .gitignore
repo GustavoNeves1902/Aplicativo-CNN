@@ -17,5 +17,8 @@ macos/Pods/
 .idea/
 .vscode/
 
+# modelos grandes
+assets/models/*.tflite
+
 # Misc
 *.log
