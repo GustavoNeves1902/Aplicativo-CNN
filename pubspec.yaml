@@ -2,7 +2,7 @@ name: app_feijao
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
@@ -37,7 +37,6 @@ dependencies:
   tflite_flutter: ^0.11.0
   image: ^3.0.1
 
-
 dependency_overrides:
   ffi: ^2.0.1 # ou uma versão mais recente, conforme o caso
 
@@ -63,9 +62,9 @@ flutter:
     - assets/models/modela.tflite
     - assets/models/modelb.tflite
     - assets/imagens/logo_coen1.png
+    - assets/imagens/logo_VIA.png
     - assets/imagens/feijao.png
-
-
+    - assets/imagens/alizarol.jpg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

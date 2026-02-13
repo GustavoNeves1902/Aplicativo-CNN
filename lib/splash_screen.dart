@@ -12,7 +12,7 @@ class SplashScreen extends StatelessWidget {
           // Background image with cover fit
           Positioned.fill(
             child: Image.asset(
-              'assets/imagens/feijao.png',
+              'assets/imagens/alizarol.jpg',
               fit: BoxFit.cover,
             ),
           ),
@@ -23,8 +23,8 @@ class SplashScreen extends StatelessWidget {
               filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
               child: Container(
                 // Semi-transparent white overlay with adjusted opacity
-                color: const Color.fromARGB(213, 255, 255, 255)
-                    .withOpacity(0.4),
+                color:
+                    const Color.fromARGB(213, 255, 255, 255).withOpacity(0.4),
               ),
             ),
           ),
@@ -36,7 +36,7 @@ class SplashScreen extends StatelessWidget {
               children: [
                 // App logo
                 Image.asset(
-                  'assets/imagens/logo_coen1.png',
+                  'assets/imagens/logo_VIA.png',
                   width: 150,
                   height: 150,
                 ),
@@ -45,11 +45,11 @@ class SplashScreen extends StatelessWidget {
 
                 // Welcome text
                 Text(
-                  "Welcome to L*a*b*",
+                  "Bem-vindo ao Alizarol App",
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: Colors.brown[900],
+                    color: const Color.fromARGB(255, 185, 61, 39),
                   ),
                 ),
 
@@ -65,14 +65,14 @@ class SplashScreen extends StatelessWidget {
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.brown[800],
+                    backgroundColor: const Color.fromARGB(255, 223, 120, 96),
                     padding: EdgeInsets.symmetric(horizontal: 30, vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
                   child: Text(
-                    "Start",
+                    "Iniciar",
                     style: TextStyle(fontSize: 18, color: Colors.white),
                   ),
                 ),
