@@ -179,73 +179,72 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('L*a*b*', style: TextStyle(color: Colors.white)),
-        backgroundColor: Colors.brown[800],
+        title: Text('ALIZAROL', style: TextStyle(color: Colors.white)),
+        backgroundColor: const Color.fromARGB(255, 221, 124, 107),
         centerTitle: true,
       ),
       body: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: _processedImages.isEmpty
-              ? Center(child: Text('No processed images yet'))
-              : ListView.builder(
-                  itemCount: _processedImages.length,
-                  itemBuilder: (context, index) {
-                    final item = _processedImages[index];
-                    return Card(
-                      margin: EdgeInsets.symmetric(vertical: 8),
-                      child: Stack(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Row(
-                              children: [
-                                // Image thumbnail
-                                Container(
-                                  width: 100,
-                                  height: 100,
-                                  child: Image.file(
-                                    item['image'],
-                                    fit: BoxFit.cover,
-                                  ),
+        padding: const EdgeInsets.all(8.0),
+        child: _processedImages.isEmpty
+            ? Center(child: Text('Nenhuma imagem selecionada até o momento'))
+            : ListView.builder(
+                itemCount: _processedImages.length,
+                itemBuilder: (context, index) {
+                  final item = _processedImages[index];
+                  return Card(
+                    margin: EdgeInsets.symmetric(vertical: 8),
+                    child: Stack(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Row(
+                            children: [
+                              // Image thumbnail
+                              Container(
+                                width: 100,
+                                height: 100,
+                                child: Image.file(
+                                  item['image'],
+                                  fit: BoxFit.cover,
                                 ),
-                                SizedBox(width: 16),
-                                // LAB color values display
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text('L: ${item['L']}',
-                                          style: TextStyle(fontSize: 18)),
-                                      Text('a: ${item['a']}',
-                                          style: TextStyle(fontSize: 18)),
-                                      Text('b: ${item['b']}',
-                                          style: TextStyle(fontSize: 18)),
-                                    ],
-                                  ),
+                              ),
+                              SizedBox(width: 16),
+                              // LAB color values display
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text('L: ${item['L']}',
+                                        style: TextStyle(fontSize: 18)),
+                                    Text('a: ${item['a']}',
+                                        style: TextStyle(fontSize: 18)),
+                                    Text('b: ${item['b']}',
+                                        style: TextStyle(fontSize: 18)),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          // Delete button
-                          Positioned(
-                            top: 0,
-                            right: 0,
-                            child: IconButton(
-                              icon: Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _deleteImage(index),
-                              iconSize: 24,
-                              padding: EdgeInsets.zero,
-                              constraints: BoxConstraints(),
-                            ),
+                        ),
+                        // Delete button
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: IconButton(
+                            icon: Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteImage(index),
+                            iconSize: 24,
+                            padding: EdgeInsets.zero,
+                            constraints: BoxConstraints(),
                           ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+      ),
       // Floating action button to add new images
       floatingActionButton: FloatingActionButton(
         onPressed: () {
