@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
+import 'dart:io';
 
 class CameraScreen extends StatefulWidget {
   final Function(String) onImageCaptured;
-
   const CameraScreen({Key? key, required this.onImageCaptured})
       : super(key: key);
 
@@ -16,9 +14,10 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   CameraController? _controller;
-  bool _isValid = false;
   bool _isProcessing = false;
-  Color _overlayColor = Colors.red.withOpacity(0.3);
+  double _brightness = 0;
+  String _message = "Aguarde...";
+  bool _isLightOk = false;
 
   @override
   void initState() {
@@ -28,60 +27,65 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _initializeCamera() async {
     final cameras = await availableCameras();
-    final camera = cameras.first;
+    if (cameras.isEmpty) return;
 
     _controller = CameraController(
-      camera,
-      ResolutionPreset.medium,
+      cameras.first,
+      ResolutionPreset.high, // Resolução alta para melhor classificação depois
       enableAudio: false,
     );
 
     await _controller!.initialize();
 
+    // Stream apenas para validar a LUZ em tempo real
     _controller!.startImageStream((CameraImage image) {
-      if (!_isProcessing) {
-        _isProcessing = true;
-        _analyzeFrame(image);
-      }
+      if (_isProcessing) return;
+      _isProcessing = true;
+      _analyzeLight(image);
     });
 
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
-  void _analyzeFrame(CameraImage image) {
-    try {
-      final plane = image.planes[0];
-      Uint8List bytes = plane.bytes;
+  void _analyzeLight(CameraImage image) {
+    // Pegamos a média de brilho do plano Y (luminância)
+    final bytes = image.planes[0].bytes;
+    int total = 0;
+    // Amostragem de 1 em cada 100 pixels para não pesar
+    for (int i = 0; i < bytes.length; i += 100) {
+      total += bytes[i];
+    }
 
-      int total = 0;
-      for (int i = 0; i < bytes.length; i += 10) {
-        total += bytes[i];
-      }
+    double avg = total / (bytes.length / 100);
 
-      double avgBrightness = total / (bytes.length / 10);
-
-      bool brightnessValid = avgBrightness > 60 && avgBrightness < 180;
-
-      bool distanceValid = avgBrightness > 80 && avgBrightness < 160;
-
-      bool valid = brightnessValid && distanceValid;
-
+    if (mounted) {
       setState(() {
-        _isValid = valid;
-        _overlayColor =
-            valid ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3);
+        _brightness = avg;
+        if (avg < 40) {
+          _message = "Ambiente muito escuro 🌑";
+          _isLightOk = false;
+        } else if (avg > 220) {
+          _message = "Muita luz! Evite reflexos ☀️";
+          _isLightOk = false;
+        } else {
+          _message = "Posicione o frasco no centro";
+          _isLightOk = true;
+        }
       });
-    } catch (_) {}
-
+    }
     _isProcessing = false;
   }
 
   Future<void> _capture() async {
-    if (!_isValid) return;
+    if (_controller == null || !_controller!.value.isInitialized) return;
 
-    final file = await _controller!.takePicture();
-    // Fecha a tela e retorna o path para quem chamou
-    Navigator.pop(context, file.path);
+    try {
+      final XFile file = await _controller!.takePicture();
+      // Retorna o path original. O recorte você pode fazer na main ou após a captura
+      Navigator.pop(context, file.path);
+    } catch (e) {
+      print("Erro ao capturar: $e");
+    }
   }
 
   @override
@@ -90,102 +94,78 @@ class _CameraScreenState extends State<CameraScreen> {
     super.dispose();
   }
 
+// No arquivo camera_screen.dart
+
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    // Definimos o tamanho do visor como 70% da largura da tela
+    double viewSize = MediaQuery.of(context).size.width * 0.7;
+
     return Scaffold(
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // 1. Preview da Câmera preenchendo a tela
-          Positioned.fill(
-            child: AspectRatio(
-              aspectRatio: _controller!.value.aspectRatio,
-              child: CameraPreview(_controller!),
+          CameraPreview(_controller!),
+
+          // Máscara escura com furo circular (Guia de enquadramento)
+          ColorFiltered(
+            colorFilter: ColorFilter.mode(
+              Colors.black.withOpacity(0.5),
+              BlendMode.srcOut,
+            ),
+            child: Stack(
+              children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.black,
+                    backgroundBlendMode: BlendMode.dstOut,
+                  ),
+                ),
+                Center(
+                  child: Container(
+                    width: viewSize,
+                    height: viewSize,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(viewSize / 2),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 
-          // 2. Visor Visual (Guia para o frasco)
-          Positioned.fill(
-            child: CustomPaint(
-              painter: CameraGuidePainter(color: _overlayColor),
-            ),
-          ),
-
-          // 3. UI de Instruções e Botão
+          // Instruções e Botão
           Positioned(
             bottom: 40,
             left: 0,
             right: 0,
             child: Column(
               children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    _isValid
-                        ? "Posição correta"
-                        : "Centralize o frasco e ajuste a luz",
-                    style: const TextStyle(
+                Text(
+                  _isLightOk
+                      ? "Centralize o líquido rosa"
+                      : "Iluminação insuficiente",
+                  style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 20),
                 FloatingActionButton(
-                  backgroundColor: _isValid ? Colors.green : Colors.grey,
-                  onPressed: _capture,
-                  child: const Icon(Icons.camera, size: 30),
+                  backgroundColor: _isLightOk ? Colors.green : Colors.grey,
+                  onPressed: _isLightOk ? _capture : null,
+                  child: const Icon(Icons.camera_alt),
                 ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );
   }
-}
-
-class CameraGuidePainter extends CustomPainter {
-  final Color color;
-
-  CameraGuidePainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width * 0.35;
-
-    // 1. Criar o fundo semi-transparente
-    final backgroundPaint = Paint()..color = Colors.black.withOpacity(0.5);
-
-    // 2. Criar o caminho para a máscara (tela inteira menos o círculo)
-    final backgroundPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..addOval(Rect.fromCircle(center: center, radius: radius))
-      ..fillType = PathFillType.evenOdd;
-
-    canvas.drawPath(backgroundPath, backgroundPaint);
-
-    // 3. Desenhar a borda do círculo (o que você já tinha)
-    final borderPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0;
-
-    canvas.drawCircle(center, radius, borderPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

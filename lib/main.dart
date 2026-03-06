@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app_feijao/camera_screen.dart';
+import 'dart:math';
 
 /// Main widget for the image predictor application
 class ImagePredictorApp extends StatefulWidget {
@@ -17,9 +18,9 @@ class ImagePredictorApp extends StatefulWidget {
 
 /// State class for the ImagePredictorApp widget
 class _ImagePredictorAppState extends State<ImagePredictorApp> {
-  // List to store processed images with their results
+// List to store processed images with their results
   final List<Map<String, dynamic>> _processedImages = [];
-  // Image picker instance for selecting images from gallery
+// Image picker instance for selecting images from gallery
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -30,7 +31,16 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
 
   /// Centraliza o processamento da imagem e atualização da UI
   Future<void> _handleProcessedImage(File image) async {
-    final predictions = await _processImage(image);
+    File croppedImage = await _processAndCropLikePython(image);
+
+    final bytes = await croppedImage.readAsBytes();
+    img.Image? decoded = img.decodeImage(bytes);
+    if (decoded != null) {
+      img.Image resized = img.copyResize(decoded, width: 224, height: 224);
+      await croppedImage.writeAsBytes(img.encodeJpg(resized));
+    }
+
+    final predictions = await _processImage(croppedImage);
 
     if (predictions != null) {
       print("Imagem processada com sucesso: ${predictions['resultado']}");
@@ -47,6 +57,82 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     } else {
       print("Erro: O processamento retornou nulo.");
     }
+  }
+
+  //recortar a imagem
+  Future<File> _processAndCropLikePython(File imageFile) async {
+    final bytes = await imageFile.readAsBytes();
+    img.Image? image = img.decodeImage(bytes);
+    if (image == null) return imageFile;
+
+    // Variáveis para o Bounding Box (igual ao seu boundingRect no Python)
+    int minX = image.width;
+    int minY = image.height;
+    int maxX = 0;
+    int maxY = 0;
+    bool found = false;
+
+    // Analisa a imagem buscando os tons de rosa/vermelho
+    for (int y = 0; y < image.height; y += 4) {
+      // Passo 4 para performance
+      for (int x = 0; x < image.width; x += 4) {
+        final pixel = image.getPixel(x, y);
+
+        // Conversão RGB para HSV para aplicar as faixas de cor
+        final hsv =
+            _rgbToHsv(pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt());
+        final h = hsv[0];
+        final s = hsv[1];
+        final v = hsv[2];
+
+        // Aplica as mesmas faixas do seu código Python (lower_red e upper_red)
+        if (((h >= 0 && h <= 10) || (h >= 160 && h <= 180)) &&
+            s > 0.12 &&
+            v > 0.20) {
+          found = true;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    // Se não encontrar o rosa, retorna a original para evitar erro
+    if (!found) return imageFile;
+
+    // RECORTE COM PADDING DE 70 (Exatamente como no seu script)
+    int padding = 70;
+    int x = (minX - padding).clamp(0, image.width);
+    int y = (minY - padding).clamp(0, image.height);
+    int w = ((maxX - minX) + (padding * 2)).clamp(0, image.width - x);
+    int h = ((maxY - minY) + (padding * 2)).clamp(0, image.height - y);
+
+    img.Image cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
+
+    // Sobrescreve o arquivo com a imagem recortada (o "depois" do seu exemplo)
+    final jpgBytes = img.encodeJpg(cropped);
+    return await imageFile.writeAsBytes(jpgBytes);
+  }
+
+// Função auxiliar para conversão HSV
+  List<double> _rgbToHsv(int r, int g, int b) {
+    double rf = r / 255;
+    double gf = g / 255;
+    double bf = b / 255;
+    double maxV = max(rf, max(gf, bf));
+    double minV = min(rf, min(gf, bf));
+    double delta = maxV - minV;
+    double h = 0;
+    if (delta != 0) {
+      if (maxV == rf)
+        h = (gf - bf) / delta % 6;
+      else if (maxV == gf)
+        h = (bf - rf) / delta + 2;
+      else
+        h = (rf - gf) / delta + 4;
+    }
+    return [h * 60, maxV == 0 ? 0 : delta / maxV, maxV];
   }
 
   /// Escolhe imagem da Galeria
@@ -116,8 +202,8 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     Interpreter? interpreterB;
     try {
       interpreterL = await Interpreter.fromAsset('assets/models/modelL.tflite');
-      interpreterA = await Interpreter.fromAsset('assets/models/modela.tflite');
-      interpreterB = await Interpreter.fromAsset('assets/models/modelb.tflite');
+      //interpreterA = await Interpreter.fromAsset('assets/models/modela.tflite');
+      //interpreterB = await Interpreter.fromAsset('assets/models/modelb.tflite');
 
       final input = await _preprocessImage(image);
 
@@ -126,11 +212,12 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
       var outputB = List.filled(1, List.filled(1, 0.0));
 
       interpreterL.run(input, outputL);
-      interpreterA.run(input, outputA);
-      interpreterB.run(input, outputB);
+      //interpreterA.run(input, outputA);
+      //interpreterB.run(input, outputB);
 
       return {
-        'resultado': 'L: ${outputL[0][0].toStringAsFixed(2)} | a: ${outputA[0][0].toStringAsFixed(2)}',
+        'resultado':
+            'L: ${outputL[0][0].toStringAsFixed(2)} | a: ${outputA[0][0].toStringAsFixed(2)}',
         'L': outputL[0][0].toStringAsFixed(2),
         'a': outputA[0][0].toStringAsFixed(2),
         'b': outputB[0][0].toStringAsFixed(2),
@@ -152,7 +239,8 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
       final img.Image? originalImage = img.decodeImage(imageBytes);
       if (originalImage == null) throw Exception("Error decoding image.");
 
-      final img.Image resizedImage = img.copyResize(originalImage, width: 224, height: 224);
+      final img.Image resizedImage =
+          img.copyResize(originalImage, width: 224, height: 224);
 
       final input = List.generate(
         1,
@@ -162,7 +250,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
             224,
             (x) {
               final pixel = resizedImage.getPixel(x, y);
-              // Compatibilidade com image v4+ (acesso direto a r, g, b)
+// Compatibilidade com image v4+ (acesso direto a r, g, b)
               final r = pixel.r / 255.0;
               final g = pixel.g / 255.0;
               final b = pixel.b / 255.0;
@@ -212,7 +300,8 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                               Container(
                                 width: 100,
                                 height: 100,
-                                child: Image.file(item['image'], fit: BoxFit.cover),
+                                child: Image.file(item['image'],
+                                    fit: BoxFit.cover),
                               ),
                               SizedBox(width: 16),
                               Expanded(
@@ -221,7 +310,9 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                                   children: [
                                     Text(
                                       'Resultado: ${item['resultado']}',
-                                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold),
                                     ),
                                   ],
                                 ),
