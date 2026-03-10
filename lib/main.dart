@@ -24,10 +24,19 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
 // Image picker instance for selecting images from gallery
   final ImagePicker _picker = ImagePicker();
 
+  late Interpreter _interpreter;
+
   @override
   void initState() {
     super.initState();
+    _loadModel();
     _loadProcessedImages();
+  }
+
+  //funcao para carregar o modelo
+  Future<void> _loadModel() async {
+    _interpreter = await Interpreter.fromAsset('assets/models/model.tflite');
+    print("Modelo carregado com sucesso");
   }
 
   /// Centraliza o processamento da imagem e atualização da UI
@@ -49,9 +58,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
         _processedImages.add({
           'image': image,
           'resultado': predictions['resultado'],
-          'L': predictions['L'],
-          'a': predictions['a'],
-          'b': predictions['b'],
+          'timestamp': DateTime.now().toIso8601String(),
         });
       });
       _saveProcessedImages();
@@ -168,9 +175,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
         .map((item) => {
               'path': item['image'].path,
               'resultado': item['resultado'],
-              'L': item['L'],
-              'a': item['a'],
-              'b': item['b'],
+              'timestamp': DateTime.now().toIso8601String(),
             })
         .toList();
     await prefs.setString('processed_images', jsonEncode(data));
@@ -187,9 +192,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
           List<Map<String, dynamic>>.from(jsonDecode(data)).map((item) => {
                 'image': File(item['path']),
                 'resultado': item['resultado'] ?? 'Sem resultado',
-                'L': item['L'],
-                'a': item['a'],
-                'b': item['b'],
+                'timestamp': item['timestamp'],
               }),
         );
       });
@@ -199,11 +202,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
   /// Processa a imagem usando os modelos TFLite
   /// Processa a imagem usando o novo modelo de classificação TFLite
   Future<Map<String, String>?> _processImage(File image) async {
-    Interpreter? interpreter;
     try {
-      // Carrega o seu modelo de classificação gerado pelo script Python
-      interpreter = await Interpreter.fromAsset('assets/models/model.tflite');
-
       // Prepara o tensor de entrada (NCHW: 1, 3, 224, 224)
       final input = await _preprocessImageForClassification(image);
 
@@ -212,7 +211,7 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
       var output = List.filled(1, List.filled(2, 0.0));
 
       // Roda a inferência
-      interpreter.run(input, output);
+      _interpreter.run(input, output);
 
       double probAprovado = output[0][0];
       double probReprovado = output[0][1];
@@ -231,16 +230,10 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
 
       return {
         'resultado': '$resultadoFinal ($confianca%)',
-        // Mantemos os campos abaixo vazios para não quebrar a UI, ou você pode removê-los depois
-        'L': '-',
-        'a': '-',
-        'b': '-',
       };
     } catch (e) {
       print('Erro na classificação: $e');
       return null;
-    } finally {
-      interpreter?.close();
     }
   }
 
@@ -297,6 +290,18 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                 itemCount: _processedImages.length,
                 itemBuilder: (context, index) {
                   final item = _processedImages[index];
+                  final timestamp = item['timestamp'];
+
+                  String formattedDate = '';
+
+                  if (timestamp != null) {
+                    DateTime date = DateTime.parse(timestamp);
+                    formattedDate = "${date.day.toString().padLeft(2, '0')}/"
+                        "${date.month.toString().padLeft(2, '0')}/"
+                        "${date.year} "
+                        "${date.hour.toString().padLeft(2, '0')}:"
+                        "${date.minute.toString().padLeft(2, '0')}";
+                  }
                   return Card(
                     margin: EdgeInsets.symmetric(vertical: 8),
                     child: Stack(
@@ -333,6 +338,15 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                                             ? Colors.red
                                             : Colors.green,
                                       ),
+                                    ),
+                                    SizedBox(
+                                      height: 4,
+                                    ),
+                                    Text(
+                                      formattedDate,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600]),
                                     ),
                                   ],
                                 ),
@@ -386,6 +400,12 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
         child: Icon(Icons.add, color: Colors.white),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _interpreter.close();
+    super.dispose();
   }
 }
 
