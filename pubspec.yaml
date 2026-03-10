@@ -59,9 +59,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/modelL.tflite
-    - assets/models/modela.tflite
-    - assets/models/modelb.tflite
+    - assets/models/Alizarol_Leite_resnet50_S43_AprovadoReprovadoSegmentado.tflite
+    - assets/models/model.tflite
     - assets/imagens/logo_coen1.png
     - assets/imagens/logo_VIA.png
     - assets/imagens/feijao.png

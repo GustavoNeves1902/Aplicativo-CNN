@@ -9,6 +9,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app_feijao/camera_screen.dart';
 import 'dart:math';
+import 'dart:typed_data';
 
 /// Main widget for the image predictor application
 class ImagePredictorApp extends StatefulWidget {
@@ -196,74 +197,81 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
   }
 
   /// Processa a imagem usando os modelos TFLite
+  /// Processa a imagem usando o novo modelo de classificação TFLite
   Future<Map<String, String>?> _processImage(File image) async {
-    Interpreter? interpreterL;
-    Interpreter? interpreterA;
-    Interpreter? interpreterB;
+    Interpreter? interpreter;
     try {
-      interpreterL = await Interpreter.fromAsset('assets/models/modelL.tflite');
-      //interpreterA = await Interpreter.fromAsset('assets/models/modela.tflite');
-      //interpreterB = await Interpreter.fromAsset('assets/models/modelb.tflite');
+      // Carrega o seu modelo de classificação gerado pelo script Python
+      interpreter = await Interpreter.fromAsset('assets/models/model.tflite');
 
-      final input = await _preprocessImage(image);
+      // Prepara o tensor de entrada (NCHW: 1, 3, 224, 224)
+      final input = await _preprocessImageForClassification(image);
 
-      var outputL = List.filled(1, List.filled(1, 0.0));
-      var outputA = List.filled(1, List.filled(1, 0.0));
-      var outputB = List.filled(1, List.filled(1, 0.0));
+      // O output agora são 2 classes: [Aprovado, Reprovado]
+      // Verifique a ordem das suas pastas no treino (ordem alfabética)
+      var output = List.filled(1, List.filled(2, 0.0));
 
-      interpreterL.run(input, outputL);
-      //interpreterA.run(input, outputA);
-      //interpreterB.run(input, outputB);
+      // Roda a inferência
+      interpreter.run(input, output);
+
+      double probAprovado = output[0][0];
+      double probReprovado = output[0][1];
+
+      // Lógica de decisão
+      String resultadoFinal;
+      String confianca;
+
+      if (probAprovado > probReprovado) {
+        resultadoFinal = "APROVADO";
+        confianca = (probAprovado * 100).toStringAsFixed(1);
+      } else {
+        resultadoFinal = "REPROVADO";
+        confianca = (probReprovado * 100).toStringAsFixed(1);
+      }
 
       return {
-        'resultado':
-            'L: ${outputL[0][0].toStringAsFixed(2)} | a: ${outputA[0][0].toStringAsFixed(2)}',
-        'L': outputL[0][0].toStringAsFixed(2),
-        'a': outputA[0][0].toStringAsFixed(2),
-        'b': outputB[0][0].toStringAsFixed(2),
+        'resultado': '$resultadoFinal ($confianca%)',
+        // Mantemos os campos abaixo vazios para não quebrar a UI, ou você pode removê-los depois
+        'L': '-',
+        'a': '-',
+        'b': '-',
       };
     } catch (e) {
-      print('Error processing image: $e');
+      print('Erro na classificação: $e');
       return null;
     } finally {
-      interpreterL?.close();
-      interpreterA?.close();
-      interpreterB?.close();
+      interpreter?.close();
     }
   }
 
   /// Pré-processamento original (Listas aninhadas)
-  Future<List<List<List<List<double>>>>> _preprocessImage(File image) async {
-    try {
-      final imageBytes = await image.readAsBytes();
-      final img.Image? originalImage = img.decodeImage(imageBytes);
-      if (originalImage == null) throw Exception("Error decoding image.");
+  /// Pré-processamento adequado para modelos vindos do PyTorch (NCHW)
+  Future<List<List<List<List<double>>>>> _preprocessImageForClassification(
+      File image) async {
+    final imageBytes = await image.readAsBytes();
+    final img.Image? originalImage = img.decodeImage(imageBytes);
+    if (originalImage == null) throw Exception("Erro ao decodificar imagem.");
 
-      final img.Image resizedImage =
-          img.copyResize(originalImage, width: 224, height: 224);
+    final img.Image resizedImage =
+        img.copyResize(originalImage, width: 224, height: 224);
 
-      final input = List.generate(
+    // NHWC -> [1][224][224][3]
+    var input = List.generate(
         1,
-        (batch) => List.generate(
-          224,
-          (y) => List.generate(
-            224,
-            (x) {
-              final pixel = resizedImage.getPixel(x, y);
-// Compatibilidade com image v4+ (acesso direto a r, g, b)
-              final r = pixel.r / 255.0;
-              final g = pixel.g / 255.0;
-              final b = pixel.b / 255.0;
-              return [r, g, b];
-            },
-          ),
-        ),
-      );
-      return input.cast<List<List<List<double>>>>();
-    } catch (e) {
-      print('Error preprocessing image: $e');
-      rethrow;
+        (_) => List.generate(224,
+            (_) => List.generate(224, (_) => List.generate(3, (_) => 0.0))));
+
+    for (int y = 0; y < 224; y++) {
+      for (int x = 0; x < 224; x++) {
+        final pixel = resizedImage.getPixel(x, y);
+
+        input[0][y][x][0] = pixel.r / 255.0;
+        input[0][y][x][1] = pixel.g / 255.0;
+        input[0][y][x][2] = pixel.b / 255.0;
+      }
     }
+
+    return input;
   }
 
   void _deleteImage(int index) {
@@ -309,10 +317,22 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Resultado: ${item['resultado']}',
+                                      'Diagnóstico:',
                                       style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold),
+                                          fontSize: 12,
+                                          color: Colors.grey[600]),
+                                    ),
+                                    Text(
+                                      '${item['resultado']}',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        // Muda a cor do texto se for Reprovado
+                                        color: item['resultado']
+                                                .contains('REPROVADO')
+                                            ? Colors.red
+                                            : Colors.green,
+                                      ),
                                     ),
                                   ],
                                 ),
