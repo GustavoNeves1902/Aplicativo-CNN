@@ -1,104 +1,115 @@
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:image/image.dart' as img;
+import 'dart:typed_data';
 import 'dart:math';
 
-/// Função para detectar a região rosa (Alizarol) e realizar um recorte 
-/// geométrico centralizado na amostra, garantindo que bordas pálidas sejam incluídas.
-img.Image? detectPinkAndCrop(img.Image image) {
-  // --- PASSO 1: PRÉ-RECORTE CENTRAL (Filtro de Ambiente) ---
-  // Isolamos 75% da área central para eliminar fundos como toalhas de mesa.
-  int side = (min(image.width, image.height) * 0.75).toInt();
-  int centerX = (image.width - side) ~/ 2;
-  int centerY = (image.height - side) ~/ 2;
+// ─────────────────────────────────────────────────────────────────────────────
+// CROP COM OPENCV — MÓDULO PRINCIPAL
+// ─────────────────────────────────────────────────────────────────────────────
 
-  img.Image centralSquare = img.copyCrop(
-    image,
-    x: centerX,
-    y: centerY,
-    width: side,
-    height: side,
-  );
-
-  // --- PASSO 2: MAPEAMENTO DA MASSA COLORIDA ---
-  int minX = centralSquare.width;
-  int minY = centralSquare.height;
-  int maxX = 0;
-  int maxY = 0;
-  bool found = false;
-
-  for (int y = 0; y < centralSquare.height; y += 5) {
-    for (int x = 0; x < centralSquare.width; x += 5) {
-      final pixel = centralSquare.getPixel(x, y);
-      
-      final hsv = rgbToHsv(pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt());
-      final h = hsv[0];
-      final s = hsv[1];
-      final v = hsv[2];
-
-      // Faixa de cor: Rosa/Magenta do Alizarol
-      bool hueOk = ((h >= 0 && h <= 30) || (h >= 290 && h <= 360));
-
-      // Saturação baixa (0.12) para tentar pegar o máximo da amostra
-      if (hueOk && s > 0.12 && v > 0.15) {
-        found = true;
-        
-        // Opcional: Marcar pixels para conferência no script de teste
-        // centralSquare.setPixelRgb(x, y, 0, 255, 0); 
-
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
+/// Detecta a placa de Petri com HoughCircles e recorta com padding de 70px.
+/// Pipeline idêntico ao script Python fornecido.
+/// Se não encontrar círculo, retorna a imagem original.
+img.Image detectPetriAndCrop(img.Image image) {
+  cv.Mat? mat;
+  try {
+    mat = _imgToMat(image);
+    final result = _houghPipeline(mat);
+    if (result != null) {
+      final out = _matToImg(result);
+      result.dispose();
+      return out;
     }
+  } catch (e) {
+    print('[Detector] Erro HoughCircles: $e');
+  } finally {
+    mat?.dispose();
   }
-
-  // Se não encontrar nada rosa, retorna o centro fixo por segurança
-  if (!found) return centralSquare; 
-
-  // --- PASSO 3: CÁLCULO DO CENTRO DE MASSA E RAIO ---
-  // Encontramos o centro geométrico da mancha rosa detectada
-  int pinkCenterX = (minX + maxX) ~/ 2;
-  int pinkCenterY = (minY + maxY) ~/ 2;
-
-  // Calculamos a maior distância do centro até as bordas detectadas
-  int distX = max(pinkCenterX - minX, maxX - pinkCenterX);
-  int distY = max(pinkCenterY - minY, maxY - pinkCenterY);
-  
-  // Criamos um diâmetro que é 35% maior que a mancha detectada.
-  // Isso "força" o enquadramento das bordas que estão quase brancas.
-  int sideLength = (max(distX, distY) * 1.35 * 2).toInt();
-
-  // --- PASSO 4: RECORTE FINAL (SQUARE CROP) ---
-  int finalCropX = (pinkCenterX - (sideLength ~/ 2)).clamp(0, centralSquare.width);
-  int finalCropY = (pinkCenterY - (sideLength ~/ 2)).clamp(0, centralSquare.height);
-  
-  int finalCropW = sideLength.clamp(1, centralSquare.width - finalCropX);
-  int finalCropH = sideLength.clamp(1, centralSquare.height - finalCropY);
-
-  return img.copyCrop(
-    centralSquare,
-    x: finalCropX,
-    y: finalCropY,
-    width: finalCropW,
-    height: finalCropH
-  );
+  print('[Detector] Círculo não encontrado — usando imagem original.');
+  return image;
 }
 
-/// Converte RGB para HSV com correção de Matiz (Hue) negativo.
-List<double> rgbToHsv(int r, int g, int b) {
-  double rf = r / 255;
-  double gf = g / 255;
-  double bf = b / 255;
-  double maxV = max(rf, max(gf, bf));
-  double minV = min(rf, min(gf, bf));
-  double delta = maxV - minV;
-  double h = 0;
-  if (delta != 0) {
-    if (maxV == rf) h = (gf - bf) / delta % 6;
-    else if (maxV == gf) h = (bf - rf) / delta + 2;
-    else h = (rf - gf) / delta + 4;
-    h *= 60;
-    if (h < 0) h += 360;
+// ─────────────────────────────────────────────────────────────────────────────
+// PIPELINE HOUGHCIRCLES (interno)
+// ─────────────────────────────────────────────────────────────────────────────
+
+cv.Mat? _houghPipeline(cv.Mat mat) {
+  // 1. Tons de Cinza
+  final gray = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
+
+  // 2. Median Blur pesado (kernel 11).
+  // O filtro mediano é incrivelmente eficaz para matar pequenas texturas
+  // (como veios da folha, amassados de papel ou ruídos no fundo)
+  // enquanto preserva bordas geométricas fortes (como a borda da placa).
+  final blurred = cv.medianBlur(gray, 11);
+  gray.dispose();
+
+  // 3. Parâmetros dinâmicos do HoughCircles baseados no tamanho da imagem
+  final minDim = min(mat.rows, mat.cols);
+  final minDist = max(100.0, minDim * 0.15); // Permite círculos um pouco mais juntos/descentralizados
+  
+  // ERRO ANTERIOR: maxR estava travado em no máximo 800px.
+  // Em fotos de galeria (12 Megapixels), o raio do prato pode ser muito maior
+  // que 800px. Removemos a limitação "min(800, ...)" para liberar o raio gigante.
+  final minR = max(20, (minDim * 0.10).toInt()); // Pelo menos 10% da imagem
+  final maxR = (minDim * 0.80).toInt();          // Pode ocupar até 80% da imagem
+
+  // Ajuste sutil do acumulador
+  final double param2 = minDim > 1500 ? 50.0 : 40.0;
+
+  final circles = cv.HoughCircles(
+    blurred,
+    cv.HOUGH_GRADIENT,
+    1.2, // dp (resolução do acumulador pouco menor q a imagem para limpar ruídos)
+    minDist,
+    param1: 100,     // Limiar alto do edge detector (bordas fortes)
+    param2: param2,  // Exigência de ser "muito perfeitamente circular"
+    minRadius: minR,
+    maxRadius: maxR,
+  );
+  blurred.dispose();
+
+  if (circles.isEmpty || circles.cols == 0) {
+    circles.dispose();
+    return null;
   }
-  return [h, maxV == 0 ? 0 : delta / maxV, maxV];
+
+  // 4. Extrai o círculo com mais "votos"
+  final c = circles.at<cv.Vec3f>(0, 0);
+  circles.dispose();
+
+  final x = c.val1;
+  final y = c.val2;
+  final r = c.val3;
+
+  print('[Detector] Círculo: (${x.toInt()}, ${y.toInt()}), r=${r.toInt()}');
+
+  final bx = (x - r).toInt();
+  final by = (y - r).toInt();
+  final bw = (2 * r).toInt();
+  final bh = (2 * r).toInt();
+
+  final xMin = max(0, bx - 70);
+  final yMin = max(0, by - 70);
+  final xMax = min(mat.cols, bx + bw + 70);
+  final yMax = min(mat.rows, by + bh + 70);
+
+  if (xMax <= xMin || yMax <= yMin) return null;
+
+  return mat.region(cv.Rect(xMin, yMin, xMax - xMin, yMax - yMin)).clone();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVERSÃO img.Image ↔ OpenCV Mat
+// ─────────────────────────────────────────────────────────────────────────────
+
+cv.Mat _imgToMat(img.Image image) {
+  final bytes = img.encodeJpg(image, quality: 95);
+  return cv.imdecode(Uint8List.fromList(bytes), cv.IMREAD_COLOR);
+}
+
+img.Image _matToImg(cv.Mat mat) {
+  final (success, bytes) = cv.imencode('.jpg', mat);
+  if (!success || bytes.isEmpty) throw Exception('imencode falhou');
+  return img.decodeImage(bytes) ?? (throw Exception('decodeImage falhou'));
 }

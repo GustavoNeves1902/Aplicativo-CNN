@@ -34,35 +34,39 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     print("Modelo carregado com sucesso");
   }
 
-  /// FUNÇÃO MESTRE ATUALIZADA: Agora utiliza a detecção inteligente
+  /// FUNÇÃO MESTRE: Processa a imagem capturada pela câmera.
+  /// O dashboard exibe a imagem RECORTADA (o que o modelo viu).
   Future<void> _handleProcessedImage(File image) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final tempDir = Directory.systemTemp;
+
     // 1. Decodifica a imagem original
     final bytes = await image.readAsBytes();
     img.Image? decoded = img.decodeImage(bytes);
     if (decoded == null) return;
 
-    // 2. APLICA A DETECÇÃO INTELIGENTE (do detector.dart)
-    // Esta função já faz o pré-corte e o ajuste pelo centro de massa rosa
-    img.Image? detectedImage = detectPinkAndCrop(decoded);
-    img.Image finalImage = detectedImage ?? decoded;
+    // 2. DETECTA A BORDA CIRCULAR DA PLACA via OpenCV (HoughCircles) + padding 70px
+    img.Image finalImage = detectPetriAndCrop(decoded);
 
-    // 3. REDIMENSIONAMENTO PARA A IA (224x224)
+    // 3. SALVA A IMAGEM RECORTADA para exibição no dashboard (≤800px, boa qualidade)
+    img.Image displayImage = finalImage.width > 800
+        ? img.copyResize(finalImage, width: 800)
+        : finalImage;
+    final displayFile = File('${tempDir.path}/display_$timestamp.jpg');
+    await displayFile.writeAsBytes(img.encodeJpg(displayImage, quality: 90));
+
+    // 4. REDIMENSIONAMENTO PARA A IA (224×224) — usado APENAS para inferência
     img.Image resized = img.copyResize(finalImage, width: 224, height: 224);
+    final inferenceFile = File('${tempDir.path}/inference_$timestamp.jpg');
+    await inferenceFile.writeAsBytes(img.encodeJpg(resized));
 
-    // 4. SALVA O RECORTE FINAL EM UM ARQUIVO TEMPORÁRIO
-    // Usamos um nome baseado no timestamp para evitar conflitos de cache
-    final tempDir = Directory.systemTemp;
-    final croppedFile = File(
-        '${tempDir.path}/crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
-    await croppedFile.writeAsBytes(img.encodeJpg(resized));
-
-    // 5. INFERÊNCIA
-    final predictions = await _processImage(croppedFile);
+    // 5. INFERÊNCIA com a imagem recortada
+    final predictions = await _processImage(inferenceFile);
 
     if (predictions != null) {
       setState(() {
         _processedImages.add({
-          'image': croppedFile, // O dashboard mostrará o foco no líquido
+          'image': displayFile, // dashboard mostra a imagem recortada
           'resultado': predictions['resultado'],
           'timestamp': DateTime.now().toIso8601String(),
         });
@@ -238,20 +242,21 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                 itemCount: _processedImages.length,
                 itemBuilder: (context, index) {
                   final item = _processedImages[index];
-                  final bool reprovado =
-                      item['resultado'].contains('REPROVADO');
+                  final String resultado = item['resultado'];
+                  final bool reprovado = resultado.contains('REPROVADO');
+                  final Color resultColor = reprovado ? Colors.red : Colors.green;
 
                   return Card(
                     margin: EdgeInsets.symmetric(vertical: 8),
                     child: ListTile(
                       onTap: () => _showFullImage(
-                          context, item['image'], item['resultado']),
+                          context, item['image'], resultado),
                       leading: Image.file(item['image'],
                           width: 60, height: 60, fit: BoxFit.cover),
-                      title: Text(item['resultado'],
+                      title: Text(resultado,
                           style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: reprovado ? Colors.red : Colors.green)),
+                              color: resultColor)),
                       subtitle: Text(item['timestamp'].split('T')[0]),
                       trailing: IconButton(
                           icon: Icon(Icons.delete, color: Colors.red),
