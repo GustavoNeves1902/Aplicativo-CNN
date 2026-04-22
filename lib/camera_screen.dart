@@ -37,7 +37,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     await _controller!.initialize();
 
-    // Stream apenas para validar a LUZ em tempo real
+    // Inicia fluxo de frames para analisar brilho sem tirar foto
     _controller!.startImageStream((CameraImage image) {
       if (_isProcessing) return;
       _isProcessing = true;
@@ -47,6 +47,7 @@ class _CameraScreenState extends State<CameraScreen> {
     if (mounted) setState(() {});
   }
 
+  /// Analisa o plano Y (luminância) da imagem para avisar se o ambiente está escuro
   void _analyzeLight(CameraImage image) {
     // Pegamos a média de brilho do plano Y (luminância)
     final bytes = image.planes[0].bytes;
@@ -111,7 +112,7 @@ class _CameraScreenState extends State<CameraScreen> {
         children: [
           CameraPreview(_controller!),
 
-          // Máscara escura com furo circular (Guia de enquadramento)
+          // --- MÁSCARA VISUAL (O "Círculo" no visor) ---
           ColorFiltered(
             colorFilter: ColorFilter.mode(
               Colors.black.withOpacity(0.5),

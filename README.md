@@ -1,123 +1,92 @@
-# L*a*b* Bean Color Analysis Mobile Application
+ALIZAROL: Classificação de Qualidade do Leite via Deep Learning
 
-This folder contains a **Flutter-based mobile application** developed as part of the undergraduate thesis project **"Bean Color Quality Prediction Using Deep Learning"**.
+Este repositório contém o código-fonte do aplicativo móvel desenvolvido para o projeto de pesquisa e TCC focado na identificação da estabilidade do leite através do teste de Alizarol, utilizando redes neurais convolucionais (CNN).
 
-The application allows users to capture or select images of bean grains and automatically predict their **L\*, a\*, and b\*** color parameters using deep learning models executed locally on the device.
+O aplicativo permite capturar ou selecionar imagens de amostras de leite misturadas ao reagente Alizarol e prevê automaticamente se a amostra está APROVADA ou REPROVADA, realizando a inferência localmente no dispositivo.
 
----
+O app integra um modelo TensorFlow Lite (ResNet50) e executa inferências offline, garantindo privacidade e agilidade no campo ou laboratório.
 
-## Application Overview
+Principais Funcionalidades
 
-The app integrates **TensorFlow Lite models** generated from the machine learning pipeline and performs **offline inference**, meaning no internet connection is required.
+Câmera Customizada: Guia visual circular e análise de iluminância em tempo real para garantir capturas padronizadas.
 
-### Main Features
-- Capture images using the device camera  
-- Select images from the device gallery  
-- On-device inference using TensorFlow Lite  
-- Prediction of L\*, a\*, and b\* color parameters  
-- Persistent local storage of analyzed samples  
-- Fully offline operation  
+Recorte Inteligente: Processamento de imagem que foca no centro do visor ou detecta automaticamente a região rosada da amostra (Bounding Box).
 
----
+Inferência Local: Classificação instantânea utilizando a arquitetura ResNet50.
 
-## Machine Learning Models
+Dashboard de Resultados: Histórico persistente das análises com visualização de data, hora e porcentagem de confiança.
 
-The application uses three TensorFlow Lite models located in `assets/models/`:
+Visualizador de Imagens: Toque em qualquer amostra no dashboard para expandir a imagem com suporte a zoom (InteractiveViewer).
 
-| Model            | Predicted Parameter | Description       |
-|-----------------|---------------------|-------------------|
-| `modelL.tflite` | L\*                 | Lightness         |
-| `modela.tflite` | a\*                 | Green–Red axis    |
-| `modelb.tflite` | b\*                 | Blue–Yellow axis  |
+Modelo de Machine Learning
 
-### Model Input Specifications
-- Image size: **224 × 224 pixels**  
-- Color format: RGB  
-- Normalization: pixel values scaled to `[0.0, 1.0]`  
-- Input tensor shape: `[1, 224, 224, 3]`  
+O aplicativo utiliza um modelo de classificação binária treinado em PyTorch e convertido para TFLite.
 
----
+Atributo	        Especificação
+Arquitetura	        ResNet50 (Transfer Learning)
+Classes	0:          APROVADO / 1: REPROVADO
+Formato de Entrada	RGB (Canais por último - NHWC)
+Dimensões do Tensor	[1, 224, 224, 3]
+Normalização	    Valores de pixel escalonados para [0.0, 1.0]
+Ativação de Saída	Logits processados via Softmax no dispositivo
 
-## Technologies Used
+Tecnologias Utilizadas
 
-- **Flutter**  
-- **Dart**  
-- **TensorFlow Lite**  
-- `tflite_flutter`  
-- `image_picker`  
-- `shared_preferences`  
-- `image`  
+Framework: Flutter (Dart)
+IA/ML: tflite_flutter (Interpretador de alto desempenho)
+Processamento de Imagem: image (Manipulação de buffers e pixels)
+Câmera: camera (Acesso ao hardware e stream de vídeo)
+Persistência: shared_preferences (Armazenamento local do histórico)
+UI/UX: image_picker, google_fonts
 
----
+Instalação e Execução
+    Pré-requisitos
 
-## Installation and Execution
+    Flutter SDK (v3.x ou superior)
 
-### Prerequisites
-- Flutter SDK installed  
-- Android SDK configured  
-- Android device or emulator  
+    Android SDK configurado
 
-### Run the Application
+Rodar o projeto
+    # Instalar dependências
+    flutter pub get
 
-```bash
-flutter pub get
-flutter run
-```
+    # Executar em modo debug
+    flutter run
 
-**Build (Android APK)**
-
-```bash
+Gerar APK de Lançamento
 flutter clean
 flutter pub get
 flutter build apk --release
-```
 
-The generated APK will be available at:
+O APK gerado estará disponível em: build/app/outputs/flutter-apk/app-release.apk
 
-`build/app/outputs/flutter-apk/app-release.apk`
+Pipeline de Processamento de Imagem
+Antes de cada inferência, a imagem passa pelas seguintes etapas:
 
----
+Captura/Seleção: Recebimento do arquivo de imagem original.
 
-## Image Preprocessing Pipeline
+Square Crop: Recorte central de 70% da menor dimensão para isolar o frasco.
 
-Before inference, the selected image goes through the following steps:
+Resizing: Redimensionamento bilinear para exatamente 224x224.
 
-- Image loading  
-- Decoding  
-- Resizing to 224 × 224  
-- RGB channel extraction  
-- Pixel normalization  
-- Tensor creation for model input  
+Normalização: Conversão dos bytes Uint8 para float32 (divisão por 255.0).
 
----
+Inferência: Execução no interpretador TFLite.
 
-## Data Persistence
+Pós-processamento: Aplicação da função Softmax nos resultados brutos para gerar a porcentagem de confiança.
 
-Uses `SharedPreferences` for local storage.
+Persistência de Dados
+O aplicativo utiliza o padrão de persistência em JSON dentro do SharedPreferences.
+Dados salvos:
 
-Stores:
+Caminho do arquivo da imagem recortada.
 
-- Image file path  
-- Predicted L\*, a\*, b\* values  
+Resultado da classificação (Texto + %).
 
-Stored data remains available after app restarts.
+Data e hora exata da análise.
 
----
 
-## Notes
+Toda a inteligência reside no dispositivo; nenhum dado é enviado para servidores externos.
 
-- All inference is performed locally on the device.  
-- No user data is transmitted or stored externally.  
-- The app was designed as a proof of concept for agricultural quality analysis.  
-
----
-
-## License
-
-This application is part of an academic undergraduate thesis project (TCC).
-
----
-
-## Author
-
-Matheus Henrique Carvalho dos Santos de Souza
+Autor
+Gustavo (Adaptado do projeto original de Matheus Henrique C. S. de Souza)

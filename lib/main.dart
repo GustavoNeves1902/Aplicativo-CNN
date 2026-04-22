@@ -8,22 +8,18 @@ import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app_feijao/camera_screen.dart';
+import 'detector.dart';
 import 'dart:math';
 import 'dart:typed_data';
 
-/// Main widget for the image predictor application
 class ImagePredictorApp extends StatefulWidget {
   @override
   _ImagePredictorAppState createState() => _ImagePredictorAppState();
 }
 
-/// State class for the ImagePredictorApp widget
 class _ImagePredictorAppState extends State<ImagePredictorApp> {
-// List to store processed images with their results
   final List<Map<String, dynamic>> _processedImages = [];
-// Image picker instance for selecting images from gallery
   final ImagePicker _picker = ImagePicker();
-
   late Interpreter _interpreter;
 
   @override
@@ -33,200 +29,66 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     _loadProcessedImages();
   }
 
-  //funcao para carregar o modelo
   Future<void> _loadModel() async {
     _interpreter = await Interpreter.fromAsset('assets/models/model.tflite');
     print("Modelo carregado com sucesso");
   }
 
-  /// Centraliza o processamento da imagem e atualização da UI
+  /// FUNÇÃO MESTRE ATUALIZADA: Agora utiliza a detecção inteligente
   Future<void> _handleProcessedImage(File image) async {
-    File croppedImage = await _processAndCropLikePython(image);
-
-    final bytes = await croppedImage.readAsBytes();
+    // 1. Decodifica a imagem original
+    final bytes = await image.readAsBytes();
     img.Image? decoded = img.decodeImage(bytes);
-    if (decoded != null) {
-      img.Image resized = img.copyResize(decoded, width: 224, height: 224);
-      await croppedImage.writeAsBytes(img.encodeJpg(resized));
-    }
+    if (decoded == null) return;
 
-    final predictions = await _processImage(croppedImage);
+    // 2. APLICA A DETECÇÃO INTELIGENTE (do detector.dart)
+    // Esta função já faz o pré-corte e o ajuste pelo centro de massa rosa
+    img.Image? detectedImage = detectPinkAndCrop(decoded);
+    img.Image finalImage = detectedImage ?? decoded;
+
+    // 3. REDIMENSIONAMENTO PARA A IA (224x224)
+    img.Image resized = img.copyResize(finalImage, width: 224, height: 224);
+
+    // 4. SALVA O RECORTE FINAL EM UM ARQUIVO TEMPORÁRIO
+    // Usamos um nome baseado no timestamp para evitar conflitos de cache
+    final tempDir = Directory.systemTemp;
+    final croppedFile = File(
+        '${tempDir.path}/crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    await croppedFile.writeAsBytes(img.encodeJpg(resized));
+
+    // 5. INFERÊNCIA
+    final predictions = await _processImage(croppedFile);
 
     if (predictions != null) {
-      print("Imagem processada com sucesso: ${predictions['resultado']}");
       setState(() {
         _processedImages.add({
-          'image': image,
+          'image': croppedFile, // O dashboard mostrará o foco no líquido
           'resultado': predictions['resultado'],
           'timestamp': DateTime.now().toIso8601String(),
         });
       });
       _saveProcessedImages();
-    } else {
-      print("Erro: O processamento retornou nulo.");
     }
   }
 
-  //recortar a imagem
-  Future<File> _processAndCropLikePython(File imageFile) async {
-    final bytes = await imageFile.readAsBytes();
-    img.Image? image = img.decodeImage(bytes);
-    if (image == null) return imageFile;
-
-    // Variáveis para o Bounding Box (igual ao seu boundingRect no Python)
-    int minX = image.width;
-    int minY = image.height;
-    int maxX = 0;
-    int maxY = 0;
-    bool found = false;
-
-    // Analisa a imagem buscando os tons de rosa/vermelho
-    for (int y = 0; y < image.height; y += 4) {
-      // Passo 4 para performance
-      for (int x = 0; x < image.width; x += 4) {
-        final pixel = image.getPixel(x, y);
-
-        // Conversão RGB para HSV para aplicar as faixas de cor
-        final hsv =
-            _rgbToHsv(pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt());
-        final h = hsv[0];
-        final s = hsv[1];
-        final v = hsv[2];
-
-        // Aplica as mesmas faixas do seu código Python (lower_red e upper_red)
-        if (((h >= 0 && h <= 10) || (h >= 160 && h <= 180)) &&
-            s > 0.12 &&
-            v > 0.20) {
-          found = true;
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-
-    // Se não encontrar o rosa, retorna a original para evitar erro
-    if (!found) return imageFile;
-
-    // RECORTE COM PADDING DE 70 (Exatamente como no seu script)
-    int padding = 70;
-    int x = (minX - padding).clamp(0, image.width);
-    int y = (minY - padding).clamp(0, image.height);
-    int w = ((maxX - minX) + (padding * 2)).clamp(0, image.width - x);
-    int h = ((maxY - minY) + (padding * 2)).clamp(0, image.height - y);
-
-    img.Image cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
-
-    // Sobrescreve o arquivo com a imagem recortada (o "depois" do seu exemplo)
-    final jpgBytes = img.encodeJpg(cropped);
-    return await imageFile.writeAsBytes(jpgBytes);
-  }
-
-// Função auxiliar para conversão HSV
-  List<double> _rgbToHsv(int r, int g, int b) {
-    double rf = r / 255;
-    double gf = g / 255;
-    double bf = b / 255;
-    double maxV = max(rf, max(gf, bf));
-    double minV = min(rf, min(gf, bf));
-    double delta = maxV - minV;
-    double h = 0;
-    if (delta != 0) {
-      if (maxV == rf)
-        h = (gf - bf) / delta % 6;
-      else if (maxV == gf)
-        h = (bf - rf) / delta + 2;
-      else
-        h = (rf - gf) / delta + 4;
-    }
-    return [h * 60, maxV == 0 ? 0 : delta / maxV, maxV];
-  }
-
-  /// Escolhe imagem da Galeria
-  Future<void> _pickImage(ImageSource source) async {
-    final XFile? pickedFile = await _picker.pickImage(source: source);
-    if (pickedFile == null) return;
-
-    final File image = File(pickedFile.path);
-    await _handleProcessedImage(image);
-  }
-
-  /// Abre a tela de câmera customizada com validação
-  Future<void> _captureWithCustomCamera() async {
-    final String? imagePath = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CameraScreen(
-          onImageCaptured: (path) => path,
-        ),
-      ),
-    );
-
-    if (imagePath != null && imagePath.isNotEmpty) {
-      await _handleProcessedImage(File(imagePath));
-    }
-  }
-
-  /// Salva os dados no SharedPreferences
-  Future<void> _saveProcessedImages() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = _processedImages
-        .map((item) => {
-              'path': item['image'].path,
-              'resultado': item['resultado'],
-              'timestamp': DateTime.now().toIso8601String(),
-            })
-        .toList();
-    await prefs.setString('processed_images', jsonEncode(data));
-  }
-
-  /// Carrega os dados do SharedPreferences
-  Future<void> _loadProcessedImages() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('processed_images');
-    if (data != null) {
-      setState(() {
-        _processedImages.clear();
-        _processedImages.addAll(
-          List<Map<String, dynamic>>.from(jsonDecode(data)).map((item) => {
-                'image': File(item['path']),
-                'resultado': item['resultado'] ?? 'Sem resultado',
-                'timestamp': item['timestamp'],
-              }),
-        );
-      });
-    }
-  }
-
-  /// Processa a imagem usando os modelos TFLite
-  /// Processa a imagem usando o novo modelo de classificação TFLite
+  /// Inferência TFLite com Softmax
   Future<Map<String, String>?> _processImage(File image) async {
     try {
-      // Prepara o tensor de entrada (NCHW: 1, 3, 224, 224)
       final input = await _preprocessImageForClassification(image);
-
-      // O output agora são 2 classes: [Aprovado, Reprovado]
-      // Verifique a ordem das suas pastas no treino (ordem alfabética)
       var output = List.filled(1, List.filled(2, 0.0));
 
-      // Roda a inferência
       _interpreter.run(input, output);
 
-      double probAprovado = output[0][0];
-      double probReprovado = output[0][1];
+      List<double> rawResults = List<double>.from(output[0]);
+      List<double> probabilities = _softmax(rawResults);
 
-      // Lógica de decisão
-      String resultadoFinal;
-      String confianca;
+      double probAprovado = probabilities[0];
+      double probReprovado = probabilities[1];
 
-      if (probAprovado > probReprovado) {
-        resultadoFinal = "APROVADO";
-        confianca = (probAprovado * 100).toStringAsFixed(1);
-      } else {
-        resultadoFinal = "REPROVADO";
-        confianca = (probReprovado * 100).toStringAsFixed(1);
-      }
+      String resultadoFinal =
+          probAprovado > probReprovado ? "APROVADO" : "REPROVADO";
+      String confianca =
+          (max(probAprovado, probReprovado) * 100).toStringAsFixed(1);
 
       return {
         'resultado': '$resultadoFinal ($confianca%)',
@@ -237,18 +99,16 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     }
   }
 
-  /// Pré-processamento original (Listas aninhadas)
-  /// Pré-processamento adequado para modelos vindos do PyTorch (NCHW)
+  /// Pré-processamento NHWC (Padrão do seu modelo TFLite)
   Future<List<List<List<List<double>>>>> _preprocessImageForClassification(
       File image) async {
     final imageBytes = await image.readAsBytes();
     final img.Image? originalImage = img.decodeImage(imageBytes);
-    if (originalImage == null) throw Exception("Erro ao decodificar imagem.");
+    if (originalImage == null) throw Exception("Erro ao decodificar");
 
     final img.Image resizedImage =
         img.copyResize(originalImage, width: 224, height: 224);
 
-    // NHWC -> [1][224][224][3]
     var input = List.generate(
         1,
         (_) => List.generate(224,
@@ -257,21 +117,109 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     for (int y = 0; y < 224; y++) {
       for (int x = 0; x < 224; x++) {
         final pixel = resizedImage.getPixel(x, y);
-
         input[0][y][x][0] = pixel.r / 255.0;
         input[0][y][x][1] = pixel.g / 255.0;
         input[0][y][x][2] = pixel.b / 255.0;
       }
     }
-
     return input;
   }
 
+  // --- MÉTODOS DE UI E PERSISTÊNCIA (MANTIDOS) ---
+
+  List<double> _softmax(List<double> logits) {
+    double maxLogit = logits.reduce(max);
+    List<double> exps = logits.map((l) => exp(l - maxLogit)).toList();
+    double sumExps = exps.reduce((a, b) => a + b);
+    return exps.map((e) => e / sumExps).toList();
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final XFile? pickedFile = await _picker.pickImage(source: source);
+    if (pickedFile != null) await _handleProcessedImage(File(pickedFile.path));
+  }
+
+  Future<void> _captureWithCustomCamera() async {
+    final String? imagePath = await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (context) =>
+                CameraScreen(onImageCaptured: (path) => path)));
+    if (imagePath != null) await _handleProcessedImage(File(imagePath));
+  }
+
+  Future<void> _saveProcessedImages() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = _processedImages
+        .map((item) => {
+              'path': item['image'].path,
+              'resultado': item['resultado'],
+              'timestamp': item['timestamp']
+            })
+        .toList();
+    await prefs.setString('processed_images', jsonEncode(data));
+  }
+
+  Future<void> _loadProcessedImages() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('processed_images');
+    if (data != null) {
+      setState(() {
+        _processedImages.clear();
+        _processedImages.addAll(
+            List<Map<String, dynamic>>.from(jsonDecode(data)).map((item) => {
+                  'image': File(item['path']),
+                  'resultado': item['resultado'],
+                  'timestamp': item['timestamp']
+                }));
+      });
+    }
+  }
+
   void _deleteImage(int index) {
-    setState(() {
-      _processedImages.removeAt(index);
-    });
+    setState(() => _processedImages.removeAt(index));
     _saveProcessedImages();
+  }
+
+  void _showFullImage(BuildContext context, File imageFile, String resultado) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(10),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            InteractiveViewer(
+                panEnabled: true,
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(imageFile, fit: BoxFit.contain))),
+            Positioned(
+                top: 10,
+                right: 10,
+                child: CircleAvatar(
+                    backgroundColor: Colors.black54,
+                    child: IconButton(
+                        icon: Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.pop(context)))),
+            Positioned(
+                bottom: 20,
+                child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(20)),
+                    child: Text(resultado,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold)))),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -285,84 +233,29 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
       body: Padding(
         padding: const EdgeInsets.all(8.0),
         child: _processedImages.isEmpty
-            ? Center(child: Text('Nenhuma imagem selecionada até o momento'))
+            ? Center(child: Text('Nenhuma imagem selecionada'))
             : ListView.builder(
                 itemCount: _processedImages.length,
                 itemBuilder: (context, index) {
                   final item = _processedImages[index];
-                  final timestamp = item['timestamp'];
+                  final bool reprovado =
+                      item['resultado'].contains('REPROVADO');
 
-                  String formattedDate = '';
-
-                  if (timestamp != null) {
-                    DateTime date = DateTime.parse(timestamp);
-                    formattedDate = "${date.day.toString().padLeft(2, '0')}/"
-                        "${date.month.toString().padLeft(2, '0')}/"
-                        "${date.year} "
-                        "${date.hour.toString().padLeft(2, '0')}:"
-                        "${date.minute.toString().padLeft(2, '0')}";
-                  }
                   return Card(
                     margin: EdgeInsets.symmetric(vertical: 8),
-                    child: Stack(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 100,
-                                height: 100,
-                                child: Image.file(item['image'],
-                                    fit: BoxFit.cover),
-                              ),
-                              SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Diagnóstico:',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600]),
-                                    ),
-                                    Text(
-                                      '${item['resultado']}',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        // Muda a cor do texto se for Reprovado
-                                        color: item['resultado']
-                                                .contains('REPROVADO')
-                                            ? Colors.red
-                                            : Colors.green,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: 4,
-                                    ),
-                                    Text(
-                                      formattedDate,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600]),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: IconButton(
-                            icon: Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => _deleteImage(index),
-                          ),
-                        ),
-                      ],
+                    child: ListTile(
+                      onTap: () => _showFullImage(
+                          context, item['image'], item['resultado']),
+                      leading: Image.file(item['image'],
+                          width: 60, height: 60, fit: BoxFit.cover),
+                      title: Text(item['resultado'],
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: reprovado ? Colors.red : Colors.green)),
+                      subtitle: Text(item['timestamp'].split('T')[0]),
+                      trailing: IconButton(
+                          icon: Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _deleteImage(index)),
                     ),
                   );
                 },
@@ -371,30 +264,23 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           showModalBottomSheet(
-            context: context,
-            builder: (BuildContext context) {
-              return Wrap(
-                children: [
-                  ListTile(
-                    leading: Icon(Icons.camera_alt),
-                    title: Text('Tirar Foto (Validada)'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _captureWithCustomCamera();
-                    },
-                  ),
-                  ListTile(
-                    leading: Icon(Icons.image),
-                    title: Text('Escolher da Galeria'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _pickImage(ImageSource.gallery);
-                    },
-                  ),
-                ],
-              );
-            },
-          );
+              context: context,
+              builder: (ctx) => Wrap(children: [
+                    ListTile(
+                        leading: Icon(Icons.camera_alt),
+                        title: Text('Tirar Foto'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _captureWithCustomCamera();
+                        }),
+                    ListTile(
+                        leading: Icon(Icons.image),
+                        title: Text('Galeria'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _pickImage(ImageSource.gallery);
+                        }),
+                  ]));
         },
         backgroundColor: Colors.blue,
         child: Icon(Icons.add, color: Colors.white),
