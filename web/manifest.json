@@ -1,6 +1,6 @@
 {
-    "name": "app_feijao",
-    "short_name": "app_feijao",
+    "name": "Alizarol_app",
+    "short_name": "Alizarol_app",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

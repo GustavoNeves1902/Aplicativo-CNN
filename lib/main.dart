@@ -1,13 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
-import 'package:app_feijao/splash_screen.dart';
+import 'package:Alizarol_app/splash_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:app_feijao/camera_screen.dart';
+import 'package:Alizarol_app/camera_screen.dart';
 import 'detector.dart';
 import 'dart:math';
 import 'dart:typed_data';

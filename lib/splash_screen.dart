@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:app_feijao/main.dart';
+import 'package:Alizarol_app/main.dart';
 
 /// Splash screen widget displayed when the app starts
 class SplashScreen extends StatelessWidget {
