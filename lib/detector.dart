@@ -1,5 +1,6 @@
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:image/image.dart' as img;
+import 'package:camera/camera.dart';
 import 'dart:typed_data';
 import 'dart:math';
 
@@ -91,6 +92,105 @@ bool hasAlizarolPink(img.Image croppedImage, {double minPixelRatio = 0.01}) {
     mask1?.dispose();
     mask2?.dispose();
     mask?.dispose();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTO-CAPTURE: CONVERSÃO DE FRAME + DETECÇÃO EM ISOLATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Converte um [CameraImage] do stream para bytes JPEG prontos para o Isolate.
+///
+/// - **Android (YUV420):** usa apenas o plano Y (luma) como imagem em tons de cinza.
+///   Isso é 3× mais rápido que a conversão YUV→RGB completa e suficiente para o
+///   HoughCircles, que opera internamente sobre tons de cinza.
+/// - **iOS (BGRA8888):**  usa [img.Image.fromBytes] sem loop de pixels.
+///
+/// A imagem é reduzida para 640 px de largura antes da codificação JPEG (quality 75)
+/// para minimizar o tempo de processamento no Isolate.
+Uint8List cameraImageToJpeg(CameraImage frame) {
+  img.Image image;
+
+  if (frame.format.group == ImageFormatGroup.yuv420) {
+    image = _yPlaneToGrayscale(frame);
+  } else {
+    // BGRA8888 (iOS)
+    image = _bgraToImage(frame);
+  }
+
+  // Reduz para 640 px de largura — círculos são fortes e detectados mesmo em baixa res
+  final scaled = img.copyResize(image, width: 640);
+  return Uint8List.fromList(img.encodeJpg(scaled, quality: 75));
+}
+
+/// Extrai o plano Y (luma) de um frame YUV420 como imagem em tons de cinza.
+/// Usa [img.Image.fromBytes] (sem loop de pixels) sempre que não há padding de linha.
+img.Image _yPlaneToGrayscale(CameraImage frame) {
+  final width = frame.width;
+  final height = frame.height;
+  final yPlane = frame.planes[0];
+
+  final Uint8List yBytes;
+  if (yPlane.bytesPerRow == width) {
+    // Sem padding — usa o buffer diretamente
+    yBytes = yPlane.bytes;
+  } else {
+    // Remove o padding linha a linha (operação de cópia de bytes, muito rápida)
+    yBytes = Uint8List(width * height);
+    for (int row = 0; row < height; row++) {
+      yBytes.setRange(
+        row * width,
+        row * width + width,
+        yPlane.bytes,
+        row * yPlane.bytesPerRow,
+      );
+    }
+  }
+
+  return img.Image.fromBytes(
+    width: width,
+    height: height,
+    bytes: yBytes.buffer,
+    numChannels: 1, // tons de cinza
+  );
+}
+
+/// Converte um frame BGRA8888 (iOS) para [img.Image] sem loop de pixels.
+img.Image _bgraToImage(CameraImage frame) {
+  final plane = frame.planes[0];
+  return img.Image.fromBytes(
+    width: frame.width,
+    height: frame.height,
+    bytes: plane.bytes.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.bgra,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DETECÇÃO DE CÍRCULO EM ISOLATE (top-level para compute())
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Função top-level compatível com [compute] (Flutter Isolates).
+///
+/// Recebe [jpegBytes] de um frame da câmera (já convertido por [cameraImageToJpeg])
+/// e retorna bytes JPEG do recorte em torno do círculo detectado,
+/// ou **null** se nenhum círculo for encontrado.
+Uint8List? detectCircleOnFrame(Uint8List jpegBytes) {
+  cv.Mat? mat;
+  cv.Mat? result;
+  try {
+    mat = cv.imdecode(jpegBytes, cv.IMREAD_COLOR);
+    result = _houghPipeline(mat);
+    if (result == null) return null;
+    final (success, encoded) = cv.imencode('.jpg', result);
+    return success ? encoded : null;
+  } catch (e) {
+    print('[Detector] detectCircleOnFrame erro: $e');
+    return null;
+  } finally {
+    mat?.dispose();
+    result?.dispose();
   }
 }
 
