@@ -4,13 +4,16 @@ import 'dart:typed_data';
 import 'dart:math';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CROP COM OPENCV — MÓDULO PRINCIPAL
+// DETECÇÃO DE PLACA + VALIDAÇÃO DA COR DO ALIZAROL
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Detecta a placa de Petri com HoughCircles e recorta com padding de 70px.
 /// Pipeline idêntico ao script Python fornecido.
-/// Se não encontrar círculo, retorna a imagem original.
-img.Image detectPetriAndCrop(img.Image image) {
+///
+/// Retorna um record `({img.Image image, bool circleFound})`:
+///  - `image`       → imagem recortada (ou original se nenhum círculo foi detectado).
+///  - `circleFound` → `true` se HoughCircles achou um círculo; `false` caso contrário.
+({img.Image image, bool circleFound}) detectPetriAndCrop(img.Image image) {
   cv.Mat? mat;
   try {
     mat = _imgToMat(image);
@@ -18,7 +21,7 @@ img.Image detectPetriAndCrop(img.Image image) {
     if (result != null) {
       final out = _matToImg(result);
       result.dispose();
-      return out;
+      return (image: out, circleFound: true);
     }
   } catch (e) {
     print('[Detector] Erro HoughCircles: $e');
@@ -26,7 +29,69 @@ img.Image detectPetriAndCrop(img.Image image) {
     mat?.dispose();
   }
   print('[Detector] Círculo não encontrado — usando imagem original.');
-  return image;
+  return (image: image, circleFound: false);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VALIDAÇÃO DA COR ROSA/VERMELHO (ALIZAROL)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verifica se a imagem (já recortada sobre o círculo) contém o tom rosa/vermelho
+/// característico do Alizarol.
+///
+/// Usa os mesmos intervalos HSV do script Python `findind_circles_01.py`:
+///   • Faixa 1: H[0,10]   S[30,255]  V[50,255]  (vermelho baixo)
+///   • Faixa 2: H[160,180] S[30,255]  V[50,255]  (vermelho alto / rosa)
+///
+/// [minPixelRatio] — fração mínima de pixels rosa para considerar positivo.
+/// Valor padrão: 0.01 (1% da imagem recortada), ajuste conforme necessário.
+bool hasAlizarolPink(img.Image croppedImage, {double minPixelRatio = 0.01}) {
+  cv.Mat? mat;
+  cv.Mat? hsv;
+  cv.Mat? mask1;
+  cv.Mat? mask2;
+  cv.Mat? mask;
+  try {
+    mat = _imgToMat(croppedImage);
+
+    // Converte BGR → HSV (mesmo espaço de cor do script Python)
+    hsv = cv.cvtColor(mat, cv.COLOR_BGR2HSV);
+
+    // Faixa 1: vermelho baixo (H 0–10)
+    mask1 = cv.inRange(
+      hsv,
+      cv.Mat.fromList(1, 3, cv.MatType.CV_8UC1, [0,   30,  50]),
+      cv.Mat.fromList(1, 3, cv.MatType.CV_8UC1, [10,  255, 255]),
+    );
+
+    // Faixa 2: rosa/vermelho alto (H 160–180)
+    mask2 = cv.inRange(
+      hsv,
+      cv.Mat.fromList(1, 3, cv.MatType.CV_8UC1, [160, 30,  50]),
+      cv.Mat.fromList(1, 3, cv.MatType.CV_8UC1, [180, 255, 255]),
+    );
+
+    // União das duas faixas
+    mask = cv.Mat.zeros(mat.rows, mat.cols, cv.MatType.CV_8UC1);
+    cv.bitwiseOR(mask1, mask2, dst: mask);
+
+    // Conta pixels rosa e calcula a proporção
+    final pinkPixels = cv.countNonZero(mask);
+    final totalPixels = mat.rows * mat.cols;
+    final ratio = pinkPixels / totalPixels;
+
+    print('[Detector] Pixels rosa: $pinkPixels / $totalPixels  (${(ratio * 100).toStringAsFixed(2)}%)');
+    return ratio >= minPixelRatio;
+  } catch (e) {
+    print('[Detector] Erro hasAlizarolPink: $e');
+    return false;
+  } finally {
+    mat?.dispose();
+    hsv?.dispose();
+    mask1?.dispose();
+    mask2?.dispose();
+    mask?.dispose();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

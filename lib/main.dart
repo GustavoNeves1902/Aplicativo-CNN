@@ -46,33 +46,47 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
     if (decoded == null) return;
 
     // 2. DETECTA A BORDA CIRCULAR DA PLACA via OpenCV (HoughCircles) + padding 70px
-    img.Image finalImage = detectPetriAndCrop(decoded);
+    final detection = detectPetriAndCrop(decoded);
+    final img.Image croppedImage = detection.image;
+    final bool circleFound = detection.circleFound;
 
     // 3. SALVA A IMAGEM RECORTADA para exibição no dashboard (≤800px, boa qualidade)
-    img.Image displayImage = finalImage.width > 800
-        ? img.copyResize(finalImage, width: 800)
-        : finalImage;
+    img.Image displayImage = croppedImage.width > 800
+        ? img.copyResize(croppedImage, width: 800)
+        : croppedImage;
     final displayFile = File('${tempDir.path}/display_$timestamp.jpg');
     await displayFile.writeAsBytes(img.encodeJpg(displayImage, quality: 90));
 
-    // 4. REDIMENSIONAMENTO PARA A IA (224×224) — usado APENAS para inferência
-    img.Image resized = img.copyResize(finalImage, width: 224, height: 224);
-    final inferenceFile = File('${tempDir.path}/inference_$timestamp.jpg');
-    await inferenceFile.writeAsBytes(img.encodeJpg(resized));
+    String resultado;
 
-    // 5. INFERÊNCIA com a imagem recortada
-    final predictions = await _processImage(inferenceFile);
+    if (!circleFound) {
+      // Sem círculo: definitivamente não é um Alizarol
+      resultado = 'ALIZAROL NÃO ENCONTRADO';
+    } else if (!hasAlizarolPink(croppedImage)) {
+      // Círculo encontrado, mas sem o tom rosa/vermelho do Alizarol
+      print('[Main] Tom rosa não detectado na região do círculo.');
+      resultado = 'ALIZAROL NÃO ENCONTRADO';
+    } else {
+      // Círculo + cor rosa confirmados → envia para a CNN
+      // 4. REDIMENSIONAMENTO PARA A IA (224×224) — usado APENAS para inferência
+      img.Image resized = img.copyResize(croppedImage, width: 224, height: 224);
+      final inferenceFile = File('${tempDir.path}/inference_$timestamp.jpg');
+      await inferenceFile.writeAsBytes(img.encodeJpg(resized));
 
-    if (predictions != null) {
-      setState(() {
-        _processedImages.add({
-          'image': displayFile, // dashboard mostra a imagem recortada
-          'resultado': predictions['resultado'],
-          'timestamp': DateTime.now().toIso8601String(),
-        });
-      });
-      _saveProcessedImages();
+      // 5. INFERÊNCIA com a imagem recortada
+      final predictions = await _processImage(inferenceFile);
+      if (predictions == null) return;
+      resultado = predictions['resultado']!;
     }
+
+    setState(() {
+      _processedImages.add({
+        'image': displayFile, // dashboard mostra a imagem recortada
+        'resultado': resultado,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    });
+    _saveProcessedImages();
   }
 
   /// Inferência TFLite com Softmax
@@ -243,8 +257,14 @@ class _ImagePredictorAppState extends State<ImagePredictorApp> {
                 itemBuilder: (context, index) {
                   final item = _processedImages[index];
                   final String resultado = item['resultado'];
+                  final bool naoEncontrado =
+                      resultado == 'ALIZAROL NÃO ENCONTRADO';
                   final bool reprovado = resultado.contains('REPROVADO');
-                  final Color resultColor = reprovado ? Colors.red : Colors.green;
+                  // Cores: aviso da marca → vermelho → verde
+                  const Color brandColor = Color.fromARGB(255, 221, 124, 107);
+                  final Color resultColor = naoEncontrado
+                      ? brandColor
+                      : (reprovado ? Colors.red : Colors.green);
 
                   return Card(
                     margin: EdgeInsets.symmetric(vertical: 8),
